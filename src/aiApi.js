@@ -12,6 +12,21 @@ export async function callOpenAICompatibleChat(messages, options = {}) {
   const apiKey = config.apiKey;
   const model = config.model;
   const timeoutMs = Number(options.timeoutMs || DEFAULT_TIMEOUT_MS);
+  const requestBody = {
+    model,
+    messages,
+    temperature: Number.isFinite(Number(options.temperature))
+      ? Number(options.temperature)
+      : 0.3,
+    ...(options.extraBody && typeof options.extraBody === "object"
+      ? options.extraBody
+      : {}),
+  };
+
+  // DeepSeek's thinking mode can make structured, knowledge-free requests much slower.
+  if (options.disableThinking && config.providerId === "deepseek") {
+    requestBody.thinking = { type: "disabled" };
+  }
 
   if (!apiKey) {
     throw new Error("请先填写 API Key。");
@@ -36,11 +51,7 @@ export async function callOpenAICompatibleChat(messages, options = {}) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages,
-        temperature: 0.3,
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
   } catch (error) {

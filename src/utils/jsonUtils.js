@@ -56,6 +56,34 @@ export function extractJsonFromText(text) {
   return content;
 }
 
+export function parseJsonFromText(text) {
+  const extracted = extractJsonFromText(text);
+
+  try {
+    return JSON.parse(extracted);
+  } catch (initialError) {
+    const repaired = repairCommonModelJson(extracted);
+
+    if (repaired === extracted) throw initialError;
+
+    try {
+      return JSON.parse(repaired);
+    } catch (repairError) {
+      throw new Error(`${initialError.message}；自动修复后仍无法解析：${repairError.message}`);
+    }
+  }
+}
+
+function repairCommonModelJson(text) {
+  return String(text || "")
+    .replace(/^\uFEFF/, "")
+    .replace(/,\s*([}\]])/g, "$1")
+    .replace(/}([\t ]*\r?\n[\t ]*){/g, "},$1{")
+    .replace(/\]([\t ]*\r?\n[\t ]*)\[/g, "],$1[")
+    .replace(/([}\]"])([\t ]*\r?\n[\t ]*)(?=[{\[])/g, "$1,$2")
+    .replace(/([}\]"])([\t ]*\r?\n[\t ]*)(?=\"[^\"\r\n]+\"\s*:)/g, "$1,$2");
+}
+
 export function validateAndNormalizeMap(data) {
   const usedIds = new Set();
 

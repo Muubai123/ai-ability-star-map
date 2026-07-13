@@ -1,6 +1,8 @@
 import { getDisplayMastery } from "./utils/mapUtils.js";
 import { validateAndNormalizeMap } from "./utils/jsonUtils.js";
 import { applyLearningActivityToNode } from "./review/reviewActivity.js";
+import { REVIEW_CONFIG } from "./review/reviewConfig.js";
+import { createReviewMetadata } from "./review/reviewMetadata.js";
 
 export const APP_DATA_KEY = "aiAbilityStarMap.appData";
 const LEGACY_KEYS = ["aiAbilityStarMap.currentMap", "aiAbilityStarMap.sessions"];
@@ -36,12 +38,16 @@ export function getMapMetadata(rootNode, previous = {}) {
     leafNodeCount: stats.leafNodeCount,
     masteryAverage: stats.totalNodes ? Number((stats.masteryTotal / stats.totalNodes).toFixed(2)) : 0,
     coverage: stats.leafNodeCount ? Number((stats.touchedLeaves / stats.leafNodeCount).toFixed(2)) : 0,
-    lastActivityAt: previous.lastActivityAt || new Date().toISOString(),
+    lastActivityAt: previous.lastActivityAt || null,
     lastSelectedNodeId: previous.lastSelectedNodeId || null,
     lastActivityType: previous.lastActivityType || null,
     lastActivityNodeId: previous.lastActivityNodeId || null,
+    lastLearnedNodeId: previous.lastLearnedNodeId || null,
+    lastLearnedNodeTitle: previous.lastLearnedNodeTitle || null,
+    lastLearningRecordId: previous.lastLearningRecordId || null,
+    recentLearnedNodeIds: Array.isArray(previous.recentLearnedNodeIds) ? [...new Set(previous.recentLearnedNodeIds.map(String))].slice(0, 12) : [],
     learningRecordCount: Number(previous.learningRecordCount) || 0,
-    reviewMetadataVersion: Number(previous.reviewMetadataVersion) || 1,
+    reviewMetadataVersion: REVIEW_CONFIG.metadataVersion,
   };
 }
 
@@ -121,19 +127,24 @@ function migrateLegacyMapData() {
 
 function hydrateReviewMetadataFromHistory(data) {
   const applyRecord = (record, activityType = record?.type) => {
-    if (!record?.id || !record?.mapId) return;
+    if (!record?.id || !record?.mapId || record.type === "global_review" || record.status === "cancelled") return;
     const changes = new Map((record.masteryChanges || []).filter((item) => item?.nodeId).map((item) => [item.nodeId, item]));
-    const nodeIds = [...new Set([...(record.nodeIds || []), record.nodeId, ...changes.keys()].filter(Boolean))];
+    const activityUpdates = new Map((record.nodeActivityUpdates || []).filter((item) => item?.nodeId).map((item) => [item.nodeId, item]));
+    const createdNodeIds = new Set(record.createdNodeIds || []);
+    const nodeIds = [...new Set([...(record.nodeIds || []), ...(record.affectedNodeIds || []), record.nodeId, ...changes.keys(), ...activityUpdates.keys()].filter(Boolean))];
     nodeIds.forEach((nodeId) => {
       const change = changes.get(nodeId);
+      const update = activityUpdates.get(nodeId);
+      const acceptedMastery = change?.accepted ?? update?.masteryAfter;
+      if (createdNodeIds.has(nodeId) && !update && !(Number(acceptedMastery) > 0)) return;
       applyLearningActivityToNode(data, {
         mapId: record.mapId,
         nodeId,
-        activityType: activityType === "manual_mastery_adjustment" ? "manual_adjustment" : activityType,
-        occurredAt: record.endedAt || record.createdAt,
-        evidence: record.evidence || [],
-        masteryBefore: change?.before ?? record.masteryBefore,
-        masteryAfter: change?.accepted ?? record.masteryAccepted,
+        activityType: update?.activityType || (activityType === "manual_mastery_adjustment" ? "manual_adjustment" : activityType),
+        activityOccurredAt: update?.activityOccurredAt || record.activityOccurredAt || record.endedAt || record.createdAt,
+        evidence: update?.evidence || record.evidence || [],
+        masteryBefore: change?.before ?? update?.masteryBefore ?? record.masteryBefore,
+        masteryAfter: acceptedMastery ?? record.masteryAccepted,
         sourceRecordId: `${record.id}:${nodeId}`,
       });
     });
@@ -150,10 +161,48 @@ function hydrateReviewMetadataFromHistory(data) {
   }, "exploration"));
 }
 
+function resetRebuildableReviewMetadata(data) {
+  const referenced = new Map();
+  (data.learningRecords || []).forEach((record) => {
+    if (!record?.mapId || record.type === "global_review" || record.status === "cancelled") return;
+    const ids = [
+      ...(record.nodeIds || []),
+      ...(record.affectedNodeIds || []),
+      record.nodeId,
+      ...(record.masteryChanges || []).map((change) => change?.nodeId),
+      ...(record.nodeActivityUpdates || []).map((update) => update?.nodeId),
+    ].filter(Boolean);
+    const set = referenced.get(record.mapId) || new Set();
+    ids.forEach((id) => set.add(id));
+    referenced.set(record.mapId, set);
+  });
+  (data.maps || []).forEach((map) => {
+    const nodeIds = referenced.get(map.id) || new Set();
+    const walkNode = (node) => {
+      const previous = node.reviewMetadata || {};
+      if (nodeIds.has(node.id) || previous.appliedActivityIds?.length) {
+        node.reviewMetadata = createReviewMetadata({
+          title: node.title,
+          description: node.description,
+          reviewMetadata: {
+            knowledgeType: previous.knowledgeType,
+            knowledgeTypeConfidence: previous.knowledgeTypeConfidence,
+            knowledgeTypeSource: previous.knowledgeTypeSource,
+            baseIntervalDays: previous.baseIntervalDays,
+          },
+        });
+      }
+      (node.children || []).forEach(walkNode);
+    };
+    walkNode(map.rootNode);
+  });
+}
+
 export function loadAppData() {
   const stored = safeParse(localStorage.getItem(APP_DATA_KEY));
   if (stored?.schemaVersion >= 2 && Array.isArray(stored.maps)) {
-    if (stored.schemaVersion < 3) {
+    const needsReviewMigration = stored.maps.some((map) => Number(map?.metadata?.reviewMetadataVersion) !== REVIEW_CONFIG.metadataVersion);
+    if (stored.schemaVersion < 3 || needsReviewMigration) {
       try { localStorage.setItem(`${APP_DATA_KEY}.backup-v${stored.schemaVersion}-${Date.now()}`, JSON.stringify(stored)); }
       catch (error) { console.warn("Unable to back up app data before review metadata migration:", error); }
     }
@@ -173,6 +222,7 @@ export function loadAppData() {
       ? stored.growthRecords.filter((item) => item?.id && item?.mapId)
       : [];
     data.schemaVersion = 3;
+    if (needsReviewMigration) resetRebuildableReviewMetadata(data);
     hydrateReviewMetadataFromHistory(data);
     if (!data.maps.some((map) => map.id === data.activeMapId)) data.activeMapId = null;
     try { localStorage.setItem(APP_DATA_KEY, JSON.stringify(data)); } catch (error) { console.warn("Unable to persist review metadata migration:", error); }
@@ -223,7 +273,6 @@ export function updateMap(data, mapId, rootNode, updates = {}) {
     metadata: getMapMetadata(normalizedRoot, {
       ...map.metadata,
       ...updates.metadata,
-      lastActivityAt: new Date().toISOString(),
     }),
   });
   saveAppData(data);

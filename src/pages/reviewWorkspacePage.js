@@ -19,7 +19,8 @@ export function renderReviewWorkspacePage(state) {
   const review = stateFor(state);
   const map = getMapById(state.appData, state.activeMapId);
   if (!map) return `<main class="review-workspace"><section class="empty-collection"><h2>找不到这张星图</h2><button data-review-workspace="back" type="button">返回复盘选择</button></section></main>`;
-  return `<main class="review-workspace"><header class="review-workspace-header"><div><p class="eyebrow">单星图复盘</p><h1>复盘：${escapeHtml(map.title)}</h1><p>先确认学习内容与证据；结构缺口会作为候选提案，仍需你确认后才写入地图。</p></div><div>${review.entryContext?.entryType === "global_review_item" ? `<button data-review-workspace="global-pause" type="button">稍后继续</button>` : ""}<button data-review-workspace="back" type="button">返回复盘选择</button></div></header>${review.error ? `<section class="review-error"><strong>${escapeHtml(review.error)}</strong>${review.rawOutput ? `<details><summary>查看模型原始输出</summary><pre>${escapeHtml(review.rawOutput)}</pre></details>` : ""}</section>` : ""}${review.status === "input" ? renderInput(review) : review.status === "mapping" ? renderMapping(map, review) : renderAssessment(map, review)}</main>`;
+  const isGlobalItem = review.entryContext?.entryType === "global_review_item";
+  return `<main class="review-workspace"><header class="review-workspace-header"><div><p class="eyebrow">${isGlobalItem ? "全局复盘 · 单科处理" : "单星图复盘"}</p><h1>复盘：${escapeHtml(map.title)}</h1><p>${isGlobalItem ? "已带入 AI 整理出的本学科内容；完成后会回到全局复盘列表。" : "先确认学习内容与证据；结构缺口会作为候选提案，仍需你确认后才写入地图。"}</p></div><div>${isGlobalItem ? `<button data-review-workspace="global-pause" type="button">暂停全局复盘</button>` : ""}<button data-review-workspace="back" type="button">${isGlobalItem ? "返回全局复盘" : "返回复盘选择"}</button></div></header>${review.error ? `<section class="review-error"><strong>${escapeHtml(review.error)}</strong>${review.rawOutput ? `<details><summary>查看模型原始输出</summary><pre>${escapeHtml(review.rawOutput)}</pre></details>` : ""}</section>` : ""}${review.status === "input" ? renderInput(review) : review.status === "mapping" ? renderMapping(map, review) : renderAssessment(map, review)}</main>`;
 }
 
 function renderInput(review) {
@@ -41,7 +42,7 @@ function renderGrowthSection(map, review, index) {
   const proposals = review.growthProposals || [];
   if (!proposals.length) return "";
   const options = index.map((node) => `<option value="${escapeHtml(node.nodeId)}">${escapeHtml(node.nodePath.join(" › "))}</option>`).join("");
-  return `<section class="review-growth-section"><div><strong>建议新增节点</strong><p>这些内容没有合适的现有节点。接受后才会写入星图；也可以改为映射已有节点。</p></div>${proposals.map((proposal) => renderGrowthProposalCard(proposal, options, map.rootNode, map.rootNode)).join("")}</section>`;
+  return `<section class="review-growth-section"><header><div><span>星图生长建议</span><strong>发现 ${proposals.length} 个结构缺口</strong><p>仅勾选并确认的候选会写入星图，也可以改为映射已有节点。</p></div><small>复盘辅助</small></header><div class="review-growth-proposal-grid">${proposals.map((proposal) => renderGrowthProposalCard(proposal, options, map.rootNode, map.rootNode)).join("")}</div></section>`;
 }
 
 function renderAssessment(map, review) {
@@ -53,7 +54,18 @@ export function bindReviewWorkspacePageEvents(state, renderApp) {
   document.querySelectorAll("[data-review-workspace]").forEach((button) => button.addEventListener("click", async () => {
     const action = button.dataset.reviewWorkspace;
     const review = stateFor(state);
-    if (action === "back") { state.currentPage = "map_selection_review"; renderApp(); return; }
+    if (action === "back") {
+      if (review.entryContext?.entryType === "global_review_item") {
+        persistReviewDraft(state, review);
+        state.activeReviewQueueId = review.entryContext.sourceQueueId;
+        state.currentMode = "review";
+        state.currentPage = "global_review_workspace";
+      } else {
+        state.currentPage = "map_selection_review";
+      }
+      renderApp();
+      return;
+    }
     if (action === "global-pause") {
       persistReviewDraft(state, review);
       pauseReviewQueue(state.appData, review.entryContext.sourceQueueId);
@@ -68,6 +80,11 @@ export function bindReviewWorkspacePageEvents(state, renderApp) {
     if (action === "save-only") { const record = saveRecord(state, review, false); clearReviewDraft(state, review); finishReviewEntry(state, review, record, null); renderApp(); return; }
     if (action === "apply") { applyReview(state, review, renderApp); }
   }));
+}
+
+export function persistReviewWorkspaceDraft(state) {
+  const review = stateFor(state);
+  persistReviewDraft(state, review);
 }
 
 async function analyze(state, review, renderApp) {
@@ -130,7 +147,9 @@ function saveRecord(state, review, apply, newNodes = [], growth = null) {
   const entry = review.entryContext;
   const createdIds = growth?.createdNodeIds || [];
   const mappedIds = growth?.mappedNodeIds || [];
-  const record = { id: `review-${Date.now().toString(36)}`, type: entry?.entryType === "global_review_item" ? "global_review_item" : "single_review", mapId: state.activeMapId, sourceQueueId: entry?.sourceQueueId || null, sourceQueueItemId: entry?.sourceQueueItemId || null, sourceGrowthRecordId: growth?.growthRecordId || null, createdNodeIds: createdIds, nodeIds: [...new Set([...(review.analysis?.matchedNodes || []).filter((item) => item.accepted).map((item) => item.nodeId), ...createdIds, ...mappedIds])], createdAt: new Date().toISOString(), endedAt: new Date().toISOString(), rawInput: review.rawInput, summary: assessment.recordSummary || review.analysis?.summary || "", evidence: (review.analysis?.matchedNodes || []).flatMap((item) => item.evidence || []), masteryChanges: [...(assessment.nodeAssessments || []).map((item) => ({ nodeId: item.nodeId, before: item.masteryBefore, suggested: item.masterySuggested, accepted: accepted.some((result) => result.nodeId === item.nodeId) ? item.masterySuggested : item.masteryBefore })), ...createdIds.map((nodeId) => { const node = findNodeById(state.starMap, nodeId); return { nodeId, before: 0, suggested: node?.mastery || 0, accepted: node?.mastery || 0, reason: "复盘新增节点" }; })], newNodes, remainingProblems: accepted.flatMap((item) => item.remainingProblems || []), nextSuggestions: assessment.nextSuggestions || [] };
+  const activityOccurredAt = new Date().toISOString();
+  const affectedNodeIds = [...new Set([...(review.analysis?.matchedNodes || []).filter((item) => item.accepted).map((item) => item.nodeId), ...createdIds, ...mappedIds])];
+  const record = { id: `review-${Date.now().toString(36)}`, type: entry?.entryType === "global_review_item" ? "global_review_item" : "single_review", mapId: state.activeMapId, sourceQueueId: entry?.sourceQueueId || null, sourceQueueItemId: entry?.sourceQueueItemId || null, sourceGrowthRecordId: growth?.growthRecordId || null, createdNodeIds: createdIds, nodeIds: affectedNodeIds, affectedNodeIds, createdAt: activityOccurredAt, endedAt: activityOccurredAt, activityOccurredAt, rawInput: review.rawInput, summary: assessment.recordSummary || review.analysis?.summary || "", evidence: (review.analysis?.matchedNodes || []).flatMap((item) => item.evidence || []), masteryChanges: [...(assessment.nodeAssessments || []).map((item) => ({ nodeId: item.nodeId, before: item.masteryBefore, suggested: item.masterySuggested, accepted: accepted.some((result) => result.nodeId === item.nodeId) ? item.masterySuggested : item.masteryBefore })), ...createdIds.map((nodeId) => { const node = findNodeById(state.starMap, nodeId); return { nodeId, before: 0, suggested: node?.mastery || 0, accepted: node?.mastery || 0, reason: "复盘新增节点" }; })], newNodes, remainingProblems: accepted.flatMap((item) => item.remainingProblems || []), nextSuggestions: assessment.nextSuggestions || [] };
   addLearningRecord(state.appData, record); saveAppData(state.appData); return record;
 }
 

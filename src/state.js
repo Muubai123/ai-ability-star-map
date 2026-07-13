@@ -10,16 +10,26 @@ function createId(prefix) {
 }
 
 function createDefaultAiState() {
-  return { showApiKey: false, messages: [{ role: "assistant", content: "你想构建哪方面的能力星图？可以告诉我目标、用途和当前基础。" }], summary: null, status: "", error: "", rawOutput: "", generationSteps: [], isTesting: false, isSending: false, isGenerating: false };
+  return { showApiKey: false, messages: [{ role: "assistant", content: "你想构建哪方面的能力星图？可以告诉我目标、用途和当前基础。" }], summary: null, status: "", error: "", rawOutput: "", generationSteps: [], draft: "", chatScrollTop: 0, stickToBottom: true, restoreFocus: false, isTesting: false, isSending: false, isGenerating: false };
 }
 
 function normalizeSession(session) {
-  return { id: session?.id || createId("chat"), title: session?.title || "新的能力星图", map: session?.map || null, ai: { ...createDefaultAiState(), ...(session?.ai || {}) }, createdAt: session?.createdAt || Date.now(), updatedAt: session?.updatedAt || Date.now() };
+  return { id: session?.id || createId("chat"), title: session?.title || "新的能力星图", mapId: session?.mapId || null, map: session?.map || null, ai: { ...createDefaultAiState(), ...(session?.ai || {}) }, createdAt: session?.createdAt || Date.now(), updatedAt: session?.updatedAt || Date.now() };
+}
+
+export function resolveSessionMapId(session, maps = []) {
+  if (!session) return null;
+  if (session.mapId && maps.some((map) => map.id === session.mapId)) return session.mapId;
+  const rootNodeId = session.map?.id;
+  return maps.find((map) => rootNodeId && map.rootNode?.id === rootNodeId)?.id || null;
 }
 
 const appData = loadAppData();
 const sessions = loadSavedSessions().map(normalizeSession);
 if (!sessions.length) sessions.push(normalizeSession({}));
+sessions.forEach((session) => {
+  session.mapId = resolveSessionMapId(session, appData.maps);
+});
 const activeSessionId = sessions.some((session) => session.id === loadActiveSessionId()) ? loadActiveSessionId() : sessions[0].id;
 const activeMap = getActiveMap(appData);
 const activeReviewQueue = getActiveGlobalReviewQueue(appData);
@@ -86,7 +96,7 @@ export function createSession(title = "新的能力星图") { const session = no
 
 export function setStarMap(rootNode, title = "") {
   const map = addMap(appState.appData, rootNode, { title: title || rootNode?.title });
-  const session = getActiveSession(); session.map = map.rootNode; session.title = map.title; session.updatedAt = Date.now();
+  const session = getActiveSession(); session.mapId = map.id; session.map = map.rootNode; session.title = map.title; session.updatedAt = Date.now();
   setActiveMap(map.id); saveSessions(appState.sessions, appState.activeSessionId); return map;
 }
 
@@ -94,9 +104,8 @@ export function deleteMapAndAssociatedAiSession(mapId) {
   const map = getMapById(appState.appData, mapId);
   if (!map) return { deleted: false, removedSessionCount: 0 };
 
-  const rootNodeId = map.rootNode?.id;
   const relatedSessions = appState.sessions.filter(
-    (session) => rootNodeId && session.map?.id === rootNodeId
+    (session) => resolveSessionMapId(session, appState.appData.maps) === mapId
   );
   const relatedIds = new Set(relatedSessions.map((session) => session.id));
 
@@ -125,6 +134,41 @@ export function deleteMapAndAssociatedAiSession(mapId) {
 
   persistAppState();
   return { deleted: true, removedSessionCount: relatedSessions.length };
+}
+
+export function deleteSessionAndAssociatedMap(sessionId) {
+  const session = appState.sessions.find((item) => item.id === sessionId);
+  if (!session) return { deleted: false, deletedMapId: null, removedSessionCount: 0 };
+
+  const mapId = resolveSessionMapId(session, appState.appData.maps);
+  const relatedSessionIds = new Set(
+    appState.sessions
+      .filter((item) => item.id === sessionId || (mapId && resolveSessionMapId(item, appState.appData.maps) === mapId))
+      .map((item) => item.id)
+  );
+
+  if (mapId) deleteMap(appState.appData, mapId);
+  appState.sessions = appState.sessions.filter((item) => !relatedSessionIds.has(item.id));
+
+  if (!appState.sessions.length) appState.sessions.push(normalizeSession({}));
+  if (!appState.sessions.some((item) => item.id === appState.activeSessionId)) {
+    appState.activeSessionId = appState.sessions[0].id;
+  }
+  appState.ai = getActiveSession().ai;
+  saveSessions(appState.sessions, appState.activeSessionId);
+
+  if (mapId && appState.activeMapId === mapId) {
+    appState.activeMapId = null;
+    appState.appData.activeMapId = null;
+    appState.starMap = null;
+    appState.currentNode = null;
+    appState.path = [];
+    appState.selectedNode = null;
+    appState.activeNodeId = null;
+  }
+
+  persistAppState();
+  return { deleted: true, deletedMapId: mapId, removedSessionCount: relatedSessionIds.size };
 }
 
 export function saveActiveSession() {

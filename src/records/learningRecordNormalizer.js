@@ -43,8 +43,10 @@ function sourceType(record) {
 function getNodeIds(record) {
   const ids = [
     ...asArray(record?.nodeIds),
+    ...asArray(record?.affectedNodeIds),
     record?.nodeId,
     ...asArray(record?.masteryChanges).map((change) => change?.nodeId),
+    ...asArray(record?.nodeActivityUpdates).map((update) => update?.nodeId),
   ].filter(Boolean).map(String);
   return [...new Set(ids)];
 }
@@ -76,7 +78,8 @@ export function normalizeLearningRecord(record, maps = []) {
   const map = getMap(maps, record?.mapId);
   const snapshots = buildSnapshots(record, maps, nodeIds);
   const startedAt = toDate(record?.startedAt);
-  const endedAt = toDate(record?.endedAt || record?.updatedAt || record?.createdAt);
+  const activityOccurredAt = toDate(record?.activityOccurredAt || record?.endedAt || record?.createdAt);
+  const endedAt = toDate(record?.endedAt || record?.activityOccurredAt || record?.updatedAt || record?.createdAt);
   const createdAt = toDate(record?.createdAt || record?.endedAt || record?.updatedAt) || new Date(0).toISOString();
   const duration = startedAt && endedAt ? Math.max(0, Math.round((new Date(endedAt) - new Date(startedAt)) / 60000)) : null;
   const explorationReview = record?.review || {};
@@ -108,6 +111,9 @@ export function normalizeLearningRecord(record, maps = []) {
     mapId: record?.mapId || null,
     mapTitle: asText(record?.mapTitle) || map?.title || (record?.mapId ? "原星图已不存在" : "跨星图"),
     nodeIds,
+    affectedNodeIds: nodeIds,
+    nodeActivityUpdates: asArray(record?.nodeActivityUpdates),
+    activityOccurredAt,
     nodeSnapshots: snapshots,
     createdAt,
     startedAt,

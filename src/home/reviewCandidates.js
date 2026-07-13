@@ -1,21 +1,11 @@
-// 首页复习候选（文档 §19-22）。
-// 在现有复习引擎（reviewActivity.js）之上补三样首页展示所需的东西：
-//   1. 按星图分组 + 每图/全局数量限制
-//   2. reasonCodes -> 本地中文文案（不依赖 AI）
-//   3. 衍生展示字段：nodePath / daysSincePractice / reasonText
-//
-// 底层的稳定度/优先级/状态计算全部复用 reviewActivity.js，本文件只做「取用 + 塑形」。
+import { calculateCurrentStability } from "../review/reviewActivity.js";
 
-import {
-  refreshNodeReviewState,
-  calculateCurrentStability,
-} from "../review/reviewActivity.js";
-
-// 每张星图最多展示的候选数 / 全局最多展示数（文档 §8.2 / §21）。
 export const PER_MAP_LIMIT = 3;
 export const GLOBAL_LIMIT = 8;
 
-// reasonCode -> 中文文案（文档 §22，原样落地）。
+const STATUS_RANK = { priority: 3, due: 2, watch: 1 };
+const ELIGIBLE_STATUSES = new Set(Object.keys(STATUS_RANK));
+
 export const REASON_TEXT = {
   past_suggested_interval: "距离上次练习已经较久",
   recent_unresolved_problem: "上次仍有未解决问题",
@@ -24,9 +14,11 @@ export const REASON_TEXT = {
   high_weight: "这是当前星图中的重要节点",
   assisted_last_time: "上次仍需要提示",
   multiple_difficulties: "最近多次记录到困难",
+  no_recent_practice: "目前只有接触记录，尚缺少练习",
+  recent_failure: "最近一次练习还不够稳定",
+  weak_independence_evidence: "目前独立完成的证据较少",
 };
 
-// 在 rootNode 下定位某节点，返回从根到该节点的标题路径（不含根，符合文档 nodePath 示例）。
 function findNodePath(root, nodeId, trail = []) {
   if (!root) return null;
   const next = [...trail, root];
@@ -43,108 +35,142 @@ function findNode(root, nodeId) {
   return path ? path.at(-1) : null;
 }
 
-function daysBetween(from, now) {
-  if (!from) return null;
-  const date = new Date(from);
-  if (Number.isNaN(date.getTime())) return null;
-  return Math.max(0, Math.floor((now - date.getTime()) / 86400000));
+function validPastIso(value, now) {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp) || timestamp > Number(now)) return null;
+  return new Date(timestamp).toISOString();
 }
 
-// 依据节点元数据推导 reasonCodes（文档 §22 的触发条件）。
-function deriveReasonCodes(node, metadata, now) {
-  const codes = [];
-  const next = metadata.nextSuggestedReviewAt;
-  if (next && new Date(next).getTime() <= now) codes.push("past_suggested_interval");
-  const stability = calculateCurrentStability(node, now);
-  if (stability !== null && stability < 0.5) codes.push("low_stability");
-  if (metadata.difficultyCount >= 2) codes.push("multiple_difficulties");
-  else if (metadata.lastPerformance === "difficulty" || metadata.lastPerformance === "unresolved") {
-    codes.push("recent_unresolved_problem");
-  }
-  if (metadata.knowledgeType === "memory") codes.push("memory_type");
-  if ((Number(node.weight) || 1) >= 3) codes.push("high_weight");
-  if (metadata.lastPerformance === "assisted_practice") codes.push("assisted_last_time");
-  return codes;
+function daysBetween(from, now) {
+  const date = validPastIso(from, now);
+  if (!date) return null;
+  return Math.floor((Number(now) - new Date(date).getTime()) / 86400000);
 }
 
 function buildReasonText(codes) {
   const parts = codes.map((code) => REASON_TEXT[code]).filter(Boolean);
-  if (!parts.length) return "建议重新关注这个节点。";
-  return `${parts.slice(0, 2).join("，")}。`;
+  return parts.length ? `${parts.slice(0, 2).join("；")}。` : "";
 }
 
-// 把引擎给出的精简候选，补成文档 §20.2 的完整展示对象。
+function compareCandidates(a, b) {
+  return (STATUS_RANK[b.reviewStatus] || 0) - (STATUS_RANK[a.reviewStatus] || 0)
+    || (Number(b.reviewPriority) || 0) - (Number(a.reviewPriority) || 0)
+    || Number((b.reasonCodes || []).includes("recent_unresolved_problem")) - Number((a.reasonCodes || []).includes("recent_unresolved_problem"))
+    || (Number(b.weight) || 1) - (Number(a.weight) || 1)
+    || (Number(b.daysSinceBaseActivity) || 0) - (Number(a.daysSinceBaseActivity) || 0)
+    || String(a.nodeId).localeCompare(String(b.nodeId));
+}
+
 function decorateCandidate(map, raw, now) {
   const node = findNode(map.rootNode, raw.nodeId);
-  const metadata = node ? refreshNodeReviewState(node, now) : {};
-  const path = node ? findNodePath(map.rootNode, raw.nodeId) : null;
-  const nodePath = path ? path.slice(1).map((item) => item.title) : [];
-  const reasonCodes = node ? deriveReasonCodes(node, metadata, now) : [];
+  if (!node || raw.mapId !== map.id || !ELIGIBLE_STATUSES.has(raw.reviewStatus)) return null;
+  const metadata = node.reviewMetadata || {};
+  const path = findNodePath(map.rootNode, raw.nodeId);
+  const reasonCodes = Array.isArray(raw.reasonCodes) ? raw.reasonCodes : [];
+  const baseActivityDate = validPastIso(raw.baseActivityDate, now);
   return {
     mapId: map.id,
     mapTitle: map.title,
     nodeId: raw.nodeId,
-    nodeTitle: raw.title || node?.title || "未命名节点",
-    nodePath,
-    mastery: Number(node?.mastery) || 0,
-    knowledgeType: metadata.knowledgeType || null,
-    lastLearnedAt: metadata.lastLearnedAt || null,
-    lastPracticedAt: metadata.lastPracticedAt || null,
-    daysSincePractice: daysBetween(metadata.lastPracticedAt || metadata.lastLearnedAt, now),
-    currentStability: node ? calculateCurrentStability(node, now) : null,
+    nodeTitle: raw.title || node.title || "未命名节点",
+    nodePath: path ? path.slice(1).map((item) => item.title) : [],
+    mastery: Number(node.mastery) || 0,
+    weight: Number(node.weight) || 1,
+    knowledgeType: raw.knowledgeType || metadata.knowledgeType || null,
+    lastLearnedAt: validPastIso(metadata.lastLearnedAt, now),
+    lastPracticedAt: validPastIso(metadata.lastPracticedAt, now),
+    lastReviewedAt: validPastIso(metadata.lastReviewedAt, now),
+    baseActivityDate,
+    baseActivityField: raw.baseActivityField || null,
+    daysSinceBaseActivity: raw.daysSinceBaseActivity ?? daysBetween(baseActivityDate, now),
+    daysSincePractice: raw.daysSinceBaseActivity ?? daysBetween(baseActivityDate, now),
+    baseIntervalDays: raw.baseIntervalDays ?? metadata.baseIntervalDays ?? null,
+    effectiveIntervalDays: raw.effectiveIntervalDays ?? null,
+    currentStability: raw.currentStability ?? calculateCurrentStability(node, now),
     reviewStatus: raw.reviewStatus,
-    reviewPriority: raw.reviewPriority,
-    nextSuggestedReviewAt: metadata.nextSuggestedReviewAt || raw.nextSuggestedReviewAt || null,
+    reviewPriority: Number(raw.reviewPriority) || 0,
+    nextSuggestedReviewAt: validPastIso(raw.nextSuggestedReviewAt, Number.MAX_SAFE_INTEGER) || null,
     reasonCodes,
     reasonText: buildReasonText(reasonCodes),
   };
 }
 
-// 单张星图的复习摘要（文档 §20.1）。
-export function getMapReviewSummary(map, rawCandidatesForMap, now = Date.now(), limit = PER_MAP_LIMIT) {
-  const decorated = rawCandidatesForMap.map((raw) => decorateCandidate(map, raw, now));
-  const count = (status) => decorated.filter((item) => item.reviewStatus === status).length;
+export function getMapReviewSummary(map, rawCandidatesForMap, now = Date.now(), limit = PER_MAP_LIMIT, displayedRaw = null) {
+  const all = rawCandidatesForMap
+    .map((raw) => decorateCandidate(map, raw, now))
+    .filter(Boolean)
+    .sort(compareCandidates);
+  const displayed = (displayedRaw || rawCandidatesForMap)
+    .map((raw) => decorateCandidate(map, raw, now))
+    .filter(Boolean)
+    .sort(compareCandidates)
+    .slice(0, limit);
+  const count = (status) => all.filter((item) => item.reviewStatus === status).length;
   return {
     mapId: map.id,
     mapTitle: map.title,
-    reviewCandidateCount: decorated.length,
+    candidateCount: all.length,
+    totalCandidates: all.length,
+    reviewCandidateCount: all.length,
+    displayedCandidateCount: displayed.length,
     priorityCount: count("priority"),
     dueCount: count("due"),
     watchCount: count("watch"),
-    highestPriority: decorated[0]?.reviewPriority ?? 0,
-    latestPracticedAt: decorated
+    highestPriority: all[0]?.reviewPriority ?? 0,
+    latestPracticedAt: all
       .map((item) => item.lastPracticedAt)
       .filter(Boolean)
       .sort()
       .at(-1) || null,
-    candidates: decorated.slice(0, limit),
+    displayedCandidates: displayed,
+    candidates: displayed,
   };
 }
 
-// 汇总所有星图的复习分组，套用每图/全局数量限制。
-// maps: appData.maps；rawByMap: (mapId) => 该图按优先级降序的原始候选数组。
 export function buildReviewGroups(maps = [], rawByMap, now = Date.now()) {
-  const groups = [];
-  let displayed = 0;
-  for (const map of maps) {
-    const raw = rawByMap(map.id) || [];
-    if (!raw.length) continue;
-    const remaining = Math.max(0, GLOBAL_LIMIT - displayed);
-    if (remaining === 0) break;
-    const perMap = Math.min(PER_MAP_LIMIT, remaining);
-    const summary = getMapReviewSummary(map, raw, now, perMap);
-    if (!summary.candidates.length) continue;
-    displayed += summary.candidates.length;
-    groups.push(summary);
-  }
-  const totalCandidateCount = maps.reduce((sum, map) => sum + (rawByMap(map.id) || []).length, 0);
-  const priorityCount = groups.reduce((sum, group) => sum + group.priorityCount, 0);
+  const cache = new Map();
+  const mapById = new Map(maps.map((map) => [map.id, map]));
+  maps.forEach((map) => {
+    const seen = new Set();
+    const raw = (rawByMap(map.id) || []).filter((candidate) => {
+      const key = `${candidate?.mapId}:${candidate?.nodeId}`;
+      if (candidate?.mapId !== map.id || !candidate?.nodeId || seen.has(key) || !ELIGIBLE_STATUSES.has(candidate.reviewStatus)) return false;
+      if (!findNode(map.rootNode, candidate.nodeId)) return false;
+      seen.add(key);
+      return true;
+    }).sort(compareCandidates);
+    cache.set(map.id, raw);
+  });
+
+  const all = [...cache.values()].flat().sort(compareCandidates);
+  const selected = [];
+  const perMapCount = new Map();
+  const take = (candidate) => {
+    if (selected.length >= GLOBAL_LIMIT) return;
+    const used = perMapCount.get(candidate.mapId) || 0;
+    if (used >= PER_MAP_LIMIT) return;
+    selected.push(candidate);
+    perMapCount.set(candidate.mapId, used + 1);
+  };
+  all.filter((item) => item.reviewStatus !== "watch").forEach(take);
+  if (selected.length < GLOBAL_LIMIT) all.filter((item) => item.reviewStatus === "watch").forEach(take);
+
+  const reviewGroups = maps.flatMap((map) => {
+    if (!mapById.has(map.id)) return [];
+    const displayed = selected.filter((candidate) => candidate.mapId === map.id);
+    if (!displayed.length) return [];
+    return [getMapReviewSummary(map, cache.get(map.id) || [], now, PER_MAP_LIMIT, displayed)];
+  });
+  const count = (status) => all.filter((item) => item.reviewStatus === status).length;
   return {
-    reviewGroups: groups,
+    reviewGroups,
     reviewSummary: {
-      totalCandidateCount,
-      displayedCandidateCount: displayed,
-      priorityCount,
+      totalCandidateCount: all.length,
+      displayedCandidateCount: selected.length,
+      priorityCount: count("priority"),
+      dueCount: count("due"),
+      watchCount: count("watch"),
     },
   };
 }

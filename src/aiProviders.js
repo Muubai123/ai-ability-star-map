@@ -4,17 +4,32 @@ export const providerPresets = [
     name: "DeepSeek",
     description: "DeepSeek 官方服务",
     baseUrl: "https://api.deepseek.com",
-    defaultModel: "deepseek-chat",
-    models: ["deepseek-chat", "deepseek-reasoner"],
-    notes: "DeepSeek 官方 OpenAI-compatible API。",
+    defaultModel: "deepseek-v4-flash",
+    models: ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-chat", "deepseek-reasoner"],
+    modelDescriptions: {
+      "deepseek-v4-flash": "快速、低成本，适合日常生成与复盘",
+      "deepseek-v4-pro": "更高质量，适合复杂星图与跨学科整理",
+      "deepseek-chat": "兼容旧配置，将于 2026-07-24 退役",
+      "deepseek-reasoner": "兼容旧配置，将于 2026-07-24 退役",
+    },
+    notes: "DeepSeek 官方 OpenAI-compatible API。默认使用 V4 Flash；旧别名仅用于兼容已有配置。",
   },
   {
     id: "openai",
     name: "OpenAI",
     description: "OpenAI 官方 API",
     baseUrl: "https://api.openai.com/v1",
-    defaultModel: "gpt-4.1-mini",
-    models: ["gpt-4.1-mini", "gpt-4o-mini"],
+    defaultModel: "gpt-5-mini",
+    models: ["gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano"],
+    modelDescriptions: {
+      "gpt-5.1": "高质量推理与复杂任务",
+      "gpt-5": "通用高质量生成",
+      "gpt-5-mini": "速度、成本和质量的平衡选择",
+      "gpt-5-nano": "轻量、低成本的短任务",
+      "gpt-4.1": "稳定的非推理旗舰模型",
+      "gpt-4.1-mini": "快速通用模型",
+      "gpt-4.1-nano": "轻量模型",
+    },
     notes: "OpenAI 官方 API。",
   },
   {
@@ -22,8 +37,16 @@ export const providerPresets = [
     name: "通义千问 / DashScope",
     description: "阿里云 DashScope 兼容模式",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    defaultModel: "qwen-plus",
-    models: ["qwen-plus", "qwen-turbo", "qwen-max"],
+    defaultModel: "qwen3.6-flash",
+    models: ["qwen3.7-max", "qwen3.7-plus", "qwen3.6-flash", "qwen-plus", "qwen-turbo", "qwen-max"],
+    modelDescriptions: {
+      "qwen3.7-max": "高能力推理与复杂任务",
+      "qwen3.7-plus": "通用平衡，支持工具与结构化输出",
+      "qwen3.6-flash": "轻量、快速、低成本",
+      "qwen-plus": "稳定通用别名",
+      "qwen-turbo": "旧版快速别名",
+      "qwen-max": "旧版高能力别名",
+    },
     notes: "阿里云 DashScope OpenAI-compatible 模式。不同账号可用模型可能不同。",
   },
   {
@@ -32,7 +55,13 @@ export const providerPresets = [
     description: "Google Gemini OpenAI compatibility",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai/",
     defaultModel: "gemini-2.5-flash",
-    models: ["gemini-2.5-flash", "gemini-3.5-flash"],
+    models: ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-flash", "gemini-2.5-flash"],
+    modelDescriptions: {
+      "gemini-3.5-flash": "当前 OpenAI 兼容示例模型，快速通用",
+      "gemini-3.1-flash-lite": "轻量低成本",
+      "gemini-3-flash": "支持可控思考的通用模型",
+      "gemini-2.5-flash": "兼容旧项目的稳定 Flash 模型",
+    },
     notes: "Google Gemini OpenAI compatibility。模型名可能随 Google 更新变化。",
   },
   {
@@ -40,13 +69,21 @@ export const providerPresets = [
     name: "OpenRouter",
     description: "统一模型路由服务",
     baseUrl: "https://openrouter.ai/api/v1",
-    defaultModel: "openai/gpt-4o-mini",
+    defaultModel: "openai/gpt-5-mini",
     models: [
-      "openai/gpt-4o-mini",
-      "google/gemini-2.5-flash",
-      "deepseek/deepseek-chat",
-      "anthropic/claude-sonnet-4.5",
+      "openai/gpt-5-mini",
+      "deepseek/deepseek-v4-flash",
+      "google/gemini-3.5-flash",
+      "qwen/qwen3.6-flash",
+      "~openai/gpt-latest",
     ],
+    modelDescriptions: {
+      "openai/gpt-5-mini": "OpenAI 轻量旗舰路由",
+      "deepseek/deepseek-v4-flash": "DeepSeek V4 快速路由",
+      "google/gemini-3.5-flash": "Gemini 快速路由",
+      "qwen/qwen3.6-flash": "Qwen 快速路由",
+      "~openai/gpt-latest": "自动解析到 OpenAI 最新系列，适合愿意跟随更新的配置",
+    },
     notes: "OpenRouter 统一模型路由。模型名以 OpenRouter 页面为准。",
   },
   {
@@ -59,7 +96,14 @@ export const providerPresets = [
       "Qwen/Qwen3-32B",
       "deepseek-ai/DeepSeek-V3",
       "deepseek-ai/DeepSeek-R1",
+      "Qwen/Qwen2.5-72B-Instruct",
     ],
+    modelDescriptions: {
+      "Qwen/Qwen3-32B": "通用中文与结构化任务",
+      "deepseek-ai/DeepSeek-V3": "通用高质量模型",
+      "deepseek-ai/DeepSeek-R1": "深度推理模型，响应通常更慢",
+      "Qwen/Qwen2.5-72B-Instruct": "较强的通用指令模型",
+    },
     notes: "模型名请以 SiliconFlow 模型页为准。",
   },
   {
@@ -72,7 +116,14 @@ export const providerPresets = [
       "Qwen/Qwen3-32B",
       "deepseek-ai/DeepSeek-V3",
       "deepseek-ai/DeepSeek-R1",
+      "Qwen/Qwen2.5-72B-Instruct",
     ],
+    modelDescriptions: {
+      "Qwen/Qwen3-32B": "通用中文与结构化任务",
+      "deepseek-ai/DeepSeek-V3": "通用高质量模型",
+      "deepseek-ai/DeepSeek-R1": "深度推理模型，响应通常更慢",
+      "Qwen/Qwen2.5-72B-Instruct": "较强的通用指令模型",
+    },
     notes: "模型名请以 SiliconFlow 模型页为准。",
   },
   {
@@ -80,8 +131,13 @@ export const providerPresets = [
     name: "Groq",
     description: "Groq OpenAI-compatible API",
     baseUrl: "https://api.groq.com/openai/v1",
-    defaultModel: "llama-3.3-70b-versatile",
-    models: ["llama-3.3-70b-versatile", "openai/gpt-oss-20b"],
+    defaultModel: "openai/gpt-oss-20b",
+    models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant"],
+    modelDescriptions: {
+      "openai/gpt-oss-120b": "高能力开源权重模型",
+      "openai/gpt-oss-20b": "低延迟通用模型",
+      "llama-3.1-8b-instant": "极速低成本模型",
+    },
     notes: "Groq OpenAI-compatible API，模型名可能随平台更新。",
   },
   {
@@ -89,8 +145,13 @@ export const providerPresets = [
     name: "xAI / Grok",
     description: "xAI OpenAI-compatible API",
     baseUrl: "https://api.x.ai/v1",
-    defaultModel: "grok-4",
-    models: ["grok-4", "grok-4.3"],
+    defaultModel: "grok-4.3",
+    models: ["grok-4.5", "grok-4.3", "grok-build-0.1"],
+    modelDescriptions: {
+      "grok-4.5": "复杂知识工作与推理",
+      "grok-4.3": "通用聊天与知识任务",
+      "grok-build-0.1": "编程与构建任务",
+    },
     notes: "xAI OpenAI-compatible API。",
   },
   {
@@ -109,6 +170,10 @@ export function getProviderPreset(providerId) {
     providerPresets.find((provider) => provider.id === providerId) ||
     providerPresets[0]
   );
+}
+
+export function getProviderModelDescription(providerId, model) {
+  return getProviderPreset(providerId).modelDescriptions?.[model] || "";
 }
 
 export function getDefaultAiConfig() {

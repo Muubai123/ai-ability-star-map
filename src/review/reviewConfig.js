@@ -1,5 +1,5 @@
 export const REVIEW_CONFIG = {
-  metadataVersion: 1,
+  metadataVersion: 2,
   priorityScale: 1,
   defaultKnowledgeType: "understanding",
   baseIntervalDays: {

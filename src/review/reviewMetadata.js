@@ -14,9 +14,20 @@ function toIso(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function toPastIso(value) {
+  const iso = toIso(value);
+  return iso && new Date(iso).getTime() <= Date.now() ? iso : null;
+}
+
 function numberInRange(value, min, max, fallback) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
+function normalizeReviewPriority(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return numberInRange(number > 1 ? number / 100 : number, 0, 1, 0);
 }
 
 export function inferLegacyNodeKnowledgeType(node) {
@@ -37,14 +48,14 @@ export function createReviewMetadata(node = {}, options = {}) {
     knowledgeType,
     knowledgeTypeConfidence: numberInRange(existing.knowledgeTypeConfidence ?? node.knowledgeTypeConfidence, 0, 1, inferred ? 0.4 : 0.7),
     knowledgeTypeSource: existing.knowledgeTypeSource || node.knowledgeTypeSource || (options.aiGenerated ? "ai_generated" : inferred ? "migrated_default" : "ai_inferred"),
-    lastLearnedAt: toIso(existing.lastLearnedAt),
-    lastPracticedAt: toIso(existing.lastPracticedAt),
-    lastReviewedAt: toIso(existing.lastReviewedAt),
-    lastMasteryChangedAt: toIso(existing.lastMasteryChangedAt),
+    lastLearnedAt: toPastIso(existing.lastLearnedAt),
+    lastPracticedAt: toPastIso(existing.lastPracticedAt),
+    lastReviewedAt: toPastIso(existing.lastReviewedAt),
+    lastMasteryChangedAt: toPastIso(existing.lastMasteryChangedAt),
     stability: existing.stability === null || existing.stability === undefined ? null : numberInRange(existing.stability, 0, 1, null),
-    stabilityUpdatedAt: toIso(existing.stabilityUpdatedAt),
+    stabilityUpdatedAt: toPastIso(existing.stabilityUpdatedAt),
     reviewStatus: ["uninitialized", "stable", "watch", "due", "priority"].includes(existing.reviewStatus) ? existing.reviewStatus : "uninitialized",
-    reviewPriority: numberInRange(existing.reviewPriority, 0, 1, 0),
+    reviewPriority: normalizeReviewPriority(existing.reviewPriority),
     baseIntervalDays: numberInRange(existing.baseIntervalDays, 1, 365, REVIEW_CONFIG.baseIntervalDays[knowledgeType]),
     nextSuggestedReviewAt: toIso(existing.nextSuggestedReviewAt),
     practiceCount: Math.max(0, Math.floor(Number(existing.practiceCount) || 0)),
@@ -54,7 +65,8 @@ export function createReviewMetadata(node = {}, options = {}) {
     assistedSuccessCount: Math.max(0, Math.floor(Number(existing.assistedSuccessCount) || 0)),
     lastPerformance: existing.lastPerformance || null,
     lastReviewMethod: existing.lastReviewMethod || null,
-    appliedActivityIds: Array.isArray(existing.appliedActivityIds) ? existing.appliedActivityIds.map(String).slice(-100) : [],
+    lastReviewDecision: existing.lastReviewDecision || null,
+    appliedActivityIds: Array.isArray(existing.appliedActivityIds) ? [...new Set(existing.appliedActivityIds.map(String))].slice(-500) : [],
   };
 }
 

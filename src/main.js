@@ -8,7 +8,7 @@ import { bindMapLibraryPageEvents, renderMapLibraryPage } from "./pages/mapLibra
 import { bindMapPageEvents, renderMapPage } from "./pages/mapPage.js";
 import { bindExplorationWorkspacePageEvents, renderExplorationWorkspacePage } from "./pages/explorationWorkspacePage.js";
 import { bindMapSelectionPageEvents, bindReviewPlaceholderEvents, renderMapSelectionPage, renderReviewPlaceholder } from "./pages/mapSelectionPage.js";
-import { bindReviewWorkspacePageEvents, renderReviewWorkspacePage } from "./pages/reviewWorkspacePage.js";
+import { bindReviewWorkspacePageEvents, persistReviewWorkspaceDraft, renderReviewWorkspacePage } from "./pages/reviewWorkspacePage.js";
 import { bindGlobalReviewWorkspacePageEvents, renderGlobalReviewWorkspacePage } from "./pages/globalReviewWorkspacePage.js";
 import { bindLearningRecordsPageEvents, renderLearningRecordsPage } from "./pages/learningRecordsPage.js";
 import { bindLearningRecordDetailPageEvents, renderLearningRecordDetailPage } from "./pages/learningRecordDetailPage.js";
@@ -74,6 +74,9 @@ function getBackTarget() {
     if (appState.currentMode === "review") return "map_selection_review";
     return "map_library";
   }
+  if (appState.currentPage === "review_workspace" && appState.review?.entryContext?.entryType === "global_review_item") {
+    return "global_review_workspace";
+  }
   if (["review_workspace", "global_review_workspace"].includes(appState.currentPage)) {
     return "map_selection_review";
   }
@@ -96,6 +99,10 @@ function renderTopBar() {
 function bindTopBarEvents() {
   document.querySelector("[data-nav='back']")?.addEventListener("click", () => {
     const target = getBackTarget();
+    if (appState.currentPage === "review_workspace" && target === "global_review_workspace") {
+      persistReviewWorkspaceDraft(appState);
+      appState.activeReviewQueueId = appState.review.entryContext.sourceQueueId;
+    }
     if (target === "map_selection_exploration" || target === "map_selection_review") {
       appState.currentMode = appState.returnContext?.mode || (target.endsWith("exploration") ? "exploration" : "review");
       appState.returnContext = null;

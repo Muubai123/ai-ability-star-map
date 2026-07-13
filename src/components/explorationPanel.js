@@ -402,20 +402,24 @@ function buildExplorationLearningRecord(session, node) {
   const createdNodeIds = (session.acceptedChanges || [])
     .filter((item) => item.type === "add_child" && item.nodeId)
     .map((item) => item.nodeId);
+  const activityOccurredAt = new Date(session.endedAt || Date.now()).toISOString();
+  const affectedNodeIds = [...new Set([session.nodeId, ...masteryChanges.map((item) => item.nodeId), ...createdNodeIds])];
   return {
     id: `exploration-record-${session.id}`,
     sourceKind: "exploration_session",
     sourceSessionId: session.id,
     type: "exploration",
     mapId: session.mapId,
-    nodeIds: [...new Set([session.nodeId, ...masteryChanges.map((item) => item.nodeId), ...createdNodeIds])],
+    nodeIds: affectedNodeIds,
+    affectedNodeIds,
     createdNodeIds,
     nodeId: session.nodeId,
     nodeTitle: node.title,
     nodePath: session.nodePath,
     createdAt: new Date(session.createdAt || Date.now()).toISOString(),
     startedAt: session.startedAt ? new Date(session.startedAt).toISOString() : null,
-    endedAt: new Date(session.endedAt || Date.now()).toISOString(),
+    endedAt: activityOccurredAt,
+    activityOccurredAt,
     summary: session.review?.summary || session.refinedGoal || session.goalInput || "探索已完成。",
     rawInput: session.completionNote || session.goalInput || "",
     evidence: [...userEvidence, ...checklistEvidence],

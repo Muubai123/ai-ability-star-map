@@ -2,6 +2,8 @@ import { callOpenAICompatibleChat } from "../aiApi.js";
 import { getAiConfigIssue } from "../aiProviders.js";
 import {
   createSession,
+  deleteSessionAndAssociatedMap,
+  resolveSessionMapId,
   saveActiveSession,
   setPage,
   setStarMap,
@@ -10,6 +12,7 @@ import {
 import {
   escapeHtml,
   extractJsonFromText,
+  parseJsonFromText,
   validateAndNormalizeMap,
 } from "../utils/jsonUtils.js";
 import {
@@ -88,7 +91,7 @@ export function renderAiPage(state) {
                 rows="1"
                 placeholder="告诉 AI 你的目标、用途、当前基础，或补充你的偏好。"
                 ${isBusy ? "disabled" : ""}
-              ></textarea>
+              >${escapeHtml(ai.draft || "")}</textarea>
               <button id="sendChatButton" class="chat-send-button" type="button" aria-label="发送消息" title="发送消息" ${isBusy ? "disabled" : ""}>
                 <span aria-hidden="true">↑</span>
               </button>
@@ -106,12 +109,29 @@ export function bindAiPageEvents(state, renderApp) {
   document.querySelectorAll("[data-ai-session-id]").forEach((button) => {
     button.addEventListener("click", () => {
       switchSession(button.dataset.aiSessionId);
+      state.ai.stickToBottom = true;
+      state.ai.restoreFocus = true;
+      renderApp();
+    });
+  });
+
+  document.querySelectorAll("[data-delete-ai-session]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const session = state.sessions.find((item) => item.id === button.dataset.deleteAiSession);
+      if (!session) return;
+      const mapId = resolveSessionMapId(session, state.appData.maps);
+      const warning = mapId
+        ? `删除对话“${session.title}”后，对应星图也会删除。确定继续吗？`
+        : `确定删除对话“${session.title}”吗？`;
+      if (!window.confirm(warning)) return;
+      deleteSessionAndAssociatedMap(session.id);
       renderApp();
     });
   });
 
   document.querySelector("#newAiSessionButton")?.addEventListener("click", () => {
     createSession("新的能力星图");
+    state.ai.restoreFocus = true;
     renderApp();
   });
 
@@ -129,10 +149,21 @@ export function bindAiPageEvents(state, renderApp) {
     await sendChatMessage(state, renderApp);
   });
 
-  document.querySelector("#chatInput")?.addEventListener("keydown", async (event) => {
+  const chatInput = document.querySelector("#chatInput");
+  chatInput?.addEventListener("input", (event) => {
+    state.ai.draft = event.target.value;
+  });
+  chatInput?.addEventListener("blur", () => saveActiveSession());
+  chatInput?.addEventListener("keydown", async (event) => {
     if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
     event.preventDefault();
     await sendChatMessage(state, renderApp);
+  });
+
+  document.querySelector("#chatMessages")?.addEventListener("scroll", (event) => {
+    const element = event.currentTarget;
+    state.ai.chatScrollTop = element.scrollTop;
+    state.ai.stickToBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
   });
 
   document.querySelector("#confirmGenerateButton")?.addEventListener("click", async () => {
@@ -182,6 +213,8 @@ export function bindAiPageEvents(state, renderApp) {
       renderApp();
     });
   });
+
+  restoreAiChatUi(state);
 }
 
 function renderAiSessionSidebar(state) {
@@ -215,16 +248,44 @@ function renderSessionButton(session, activeSessionId) {
       })
     : "";
 
+  const isBusy = session.ai?.isSending || session.ai?.isGenerating || session.ai?.isTesting;
   return `
-    <button
-      class="session-list-item ${session.id === activeSessionId ? "active" : ""}"
-      data-ai-session-id="${session.id}"
-      type="button"
-    >
-      <strong>${escapeHtml(session.title)}</strong>
-      <span>${userMessageCount} 条输入${updatedAt ? ` · ${updatedAt}` : ""}</span>
-    </button>
+    <div class="session-list-row">
+      <button
+        class="session-list-item ${session.id === activeSessionId ? "active" : ""}"
+        data-ai-session-id="${session.id}"
+        type="button"
+      >
+        <strong>${escapeHtml(session.title)}</strong>
+        <span>${userMessageCount} 条输入${updatedAt ? ` · ${updatedAt}` : ""}</span>
+      </button>
+      <button
+        class="session-delete-button"
+        data-delete-ai-session="${session.id}"
+        type="button"
+        aria-label="删除对话：${escapeHtml(session.title)}"
+        title="删除对话${session.mapId || session.map ? "及对应星图" : ""}"
+        ${isBusy ? "disabled" : ""}
+      >×</button>
+    </div>
   `;
+}
+
+function restoreAiChatUi(state) {
+  window.requestAnimationFrame(() => {
+    const messages = document.querySelector("#chatMessages");
+    const input = document.querySelector("#chatInput");
+    if (messages) {
+      messages.scrollTop = state.ai.stickToBottom !== false
+        ? messages.scrollHeight
+        : Math.min(Number(state.ai.chatScrollTop) || 0, messages.scrollHeight);
+    }
+    if (input && state.ai.restoreFocus && !state.ai.isSending && !state.ai.isGenerating) {
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(input.value.length, input.value.length);
+      state.ai.restoreFocus = false;
+    }
+  });
 }
 
 function renderInlineStatus(ai, statusClass) {
@@ -343,6 +404,9 @@ async function sendChatMessage(state, renderApp) {
 
   if (!ensureAiConfigured(state, renderApp)) return;
 
+  state.ai.draft = "";
+  state.ai.stickToBottom = true;
+  state.ai.restoreFocus = false;
   state.ai.messages.push({ role: "user", content });
   state.ai.summary = null;
   state.ai.status = "AI 正在整理需求...";
@@ -384,6 +448,7 @@ async function sendChatMessage(state, renderApp) {
     state.ai.rawOutput = rawOutput;
   } finally {
     state.ai.isSending = false;
+    state.ai.restoreFocus = true;
     saveActiveSession();
     renderApp();
   }
@@ -472,6 +537,7 @@ async function generateConfirmedMap(state, renderApp) {
   state.ai.rawOutput = "";
   const generationMessage = createGenerationMessage();
   state.ai.messages.push(generationMessage);
+  state.ai.stickToBottom = true;
   state.ai.isGenerating = true;
   renderApp();
 
@@ -489,11 +555,14 @@ async function generateConfirmedMap(state, renderApp) {
       state.ai.messages,
       { limit: 8, knowledgeBases: state.appData.knowledgeBases }
     );
+    const generationOptions = getGenerationRequestOptions(relevantKnowledge);
     setGenerationStep(
       generationMessage,
       "knowledge",
       "done",
-      `已匹配 ${relevantKnowledge.length} 个高相关章节。`
+      relevantKnowledge.length
+        ? `已匹配 ${relevantKnowledge.length} 个高相关章节。`
+        : "本地资料不足，将直接生成可继续生长的学习骨架。"
     );
     setGenerationStep(
       generationMessage,
@@ -507,21 +576,35 @@ async function generateConfirmedMap(state, renderApp) {
       buildMapGenerationMessages(
         state.ai.summary,
         state.ai.messages,
-        relevantKnowledge
+        relevantKnowledge,
+        generationOptions
       ),
-      { ...state.aiConfig, timeoutMs: 180000 }
+      { ...state.aiConfig, ...generationOptions }
     );
     setGenerationStep(generationMessage, "draft", "done", "模型已返回第一版星图。");
     setGenerationStep(generationMessage, "parse", "active", "正在提取并解析 JSON。");
     renderApp();
 
-    const parsed = JSON.parse(extractJsonFromText(rawOutput));
+    const parsed = parseJsonFromText(rawOutput);
     setGenerationStep(generationMessage, "parse", "done", "JSON 解析完成。");
     setGenerationStep(generationMessage, "check", "active", "正在校验字段、层级深度和节点数量。");
     let normalizedMap = validateAndNormalizeMap(parsed);
     const qualityIssue = getGeneratedMapQualityIssue(normalizedMap);
 
-    if (qualityIssue) {
+    if (qualityIssue && !generationOptions.shouldAutoExpand) {
+      setGenerationStep(
+        generationMessage,
+        "check",
+        "done",
+        `资料不足，已保留可继续生长的骨架：${qualityIssue}`
+      );
+      setGenerationStep(
+        generationMessage,
+        "expand",
+        "done",
+        "已跳过自动扩展，后续可在星图内继续生长。"
+      );
+    } else if (qualityIssue) {
       setGenerationStep(generationMessage, "check", "active", `初稿需要扩展：${qualityIssue}`);
       setGenerationStep(
         generationMessage,
@@ -538,20 +621,23 @@ async function generateConfirmedMap(state, renderApp) {
           qualityIssue,
           relevantKnowledge
         ),
-        { ...state.aiConfig, timeoutMs: 180000 }
+        { ...state.aiConfig, timeoutMs: 90000, disableThinking: true }
       );
       setGenerationStep(generationMessage, "expand", "done", "扩展版星图已返回。");
       setGenerationStep(generationMessage, "parse", "active", "正在重新解析扩展后的 JSON。");
       renderApp();
-      normalizedMap = validateAndNormalizeMap(
-        JSON.parse(extractJsonFromText(rawOutput))
-      );
-      setGenerationStep(generationMessage, "parse", "done", "扩展版 JSON 解析完成。");
+      try {
+        const expandedMap = validateAndNormalizeMap(parseJsonFromText(rawOutput));
+        normalizedMap = expandedMap;
+        setGenerationStep(generationMessage, "parse", "done", "扩展版 JSON 解析完成。");
 
-      const retryQualityIssue = getGeneratedMapQualityIssue(normalizedMap);
-      if (retryQualityIssue) {
-        setGenerationStep(generationMessage, "check", "error", retryQualityIssue);
-        throw new Error(`模型生成的星图仍然过浅：${retryQualityIssue}`);
+        const retryQualityIssue = getGeneratedMapQualityIssue(normalizedMap);
+        if (retryQualityIssue) {
+          setGenerationStep(generationMessage, "check", "done", `扩展已保存，后续仍可继续生长：${retryQualityIssue}`);
+        }
+      } catch (expansionError) {
+        setGenerationStep(generationMessage, "expand", "done", "扩展输出格式不完整，已保留可用初稿。");
+        setGenerationStep(generationMessage, "parse", "done", `扩展版解析失败，已安全回退初稿：${expansionError.message}`);
       }
     }
 
@@ -578,6 +664,7 @@ async function generateConfirmedMap(state, renderApp) {
     state.ai.rawOutput = "";
   } finally {
     state.ai.isGenerating = false;
+    state.ai.restoreFocus = true;
     saveActiveSession();
     renderApp();
   }
@@ -649,16 +736,29 @@ function ensureAiConfigured(state, renderApp) {
   return false;
 }
 
-function buildMapGenerationMessages(summary, messages, relevantKnowledge = []) {
+export function getGenerationRequestOptions(relevantKnowledge = []) {
+  const hasLocalKnowledge = Array.isArray(relevantKnowledge) && relevantKnowledge.length > 0;
+
+  return {
+    timeoutMs: hasLocalKnowledge ? 90000 : 70000,
+    disableThinking: !hasLocalKnowledge,
+    shouldAutoExpand: hasLocalKnowledge,
+  };
+}
+
+export function buildMapGenerationMessages(summary, messages, relevantKnowledge = [], options = {}) {
+  const hasLocalKnowledge = Array.isArray(relevantKnowledge) && relevantKnowledge.length > 0;
   const transcript = messages
     .slice(-8)
     .map((message) => `${message.role === "user" ? "用户" : "AI"}：${message.content}`)
     .join("\n");
   const knowledgeContext = buildKnowledgeContext(relevantKnowledge, {
-    maxChars: 9000,
-    maxItemsPerSection: 8,
-    maxSections: 12,
+    maxChars: hasLocalKnowledge ? 5200 : 800,
+    maxDocumentChars: hasLocalKnowledge ? 1400 : 0,
   });
+  const sourcePolicy = hasLocalKnowledge
+    ? "仅将上述本地资料作为优先参考；不要联网检索、不要等待外部资料。"
+    : "本地资料不足。不要联网检索、不要等待外部资料；直接依据已确认需求和通用知识生成可继续生长的学习骨架。";
 
   return [
     { role: "system", content: mapGenerationSystemPrompt },
@@ -673,6 +773,9 @@ ${transcript}
 
 本地学科知识库参考：
 ${knowledgeContext}
+
+资料使用规则：
+${sourcePolicy}
 
 请生成能力星图 JSON。格式必须严格符合：
 {
@@ -750,7 +853,9 @@ ${knowledgeContext}
 5. weight 范围 0.5 到 4。
 6. id 必须唯一，使用英文小写短横线风格。
 7. 保留并补齐每个节点的 knowledgeType，取值只能是 memory、understanding、problem_solving、operation、output、mixed；按主要学习行为判断，mixed 仅用于确实无法归类的节点。
-8. 只能输出完整星图 JSON，不要 Markdown，不要代码块，不要解释。
+8. 总节点控制在 35-70 个，每个节点最多 5 个直接子节点；不要批量枚举几十道例题、词表或同类任务。
+9. title 保持简短，description 只写一句话，避免输出过长导致 JSON 截断。
+10. 只能输出完整星图 JSON，不要 Markdown，不要代码块，不要解释。
       `.trim(),
     },
   ];

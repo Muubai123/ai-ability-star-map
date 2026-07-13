@@ -1,6 +1,7 @@
 import {
   configForProvider,
   getAiConfigIssue,
+  getProviderModelDescription,
   getProviderPreset,
   providerPresets,
 } from "../aiProviders.js";
@@ -232,7 +233,7 @@ function renderModelPicker(config, provider, showCustomModel, isBusy) {
           .map(
             (model) => `
               <option value="${model}" ${model === config.model ? "selected" : ""}>
-                ${escapeHtml(model)}
+                ${escapeHtml(model)}${getProviderModelDescription(provider.id, model) ? ` - ${escapeHtml(getProviderModelDescription(provider.id, model))}` : ""}
               </option>
             `
           )

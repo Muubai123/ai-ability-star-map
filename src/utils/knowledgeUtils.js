@@ -11,7 +11,7 @@ export function findRelevantKnowledge(summary, messages, options = {}) {
   const scored = entries.map((entry) => ({ entry, score: scoreEntry(entry, tokens) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || String(a.entry.name).localeCompare(String(b.entry.name), "zh-CN"));
-  return (scored.length ? scored.map((item) => item.entry) : entries).slice(0, limit);
+  return scored.map((item) => item.entry).slice(0, limit);
 }
 
 export function buildKnowledgeContext(entries, options = {}) {

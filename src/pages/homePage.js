@@ -73,25 +73,28 @@ function renderCandidate(candidate) {
   return `<li class="home-review-node status-${candidate.reviewStatus}">
     <p class="home-review-node-title">${escapeHtml(candidate.nodeTitle)}</p>
     ${meta.length ? `<p class="home-review-node-meta">${escapeHtml(meta.join(" · "))}</p>` : ""}
-    <p class="home-review-node-reason">${escapeHtml(candidate.reasonText || "")}</p>
+    ${candidate.reasonText ? `<p class="home-review-node-reason">${escapeHtml(candidate.reasonText)}</p>` : ""}
   </li>`;
 }
 
 // 复习建议区（文档 §8-9）。
 function renderReviewGroups(vm) {
   if (!vm.reviewSummary.totalCandidateCount) {
+    const copy = !vm.emptyState.hasMaps
+      ? "创建第一张星图后，这里会逐渐形成学习与复习建议。"
+      : !vm.emptyState.hasLearningRecords
+        ? "完成一次探索或复盘后，这里会开始记录需要重新关注的内容。"
+        : "目前没有需要优先复习的内容，你的近期学习状态比较稳定。";
     return `<div class="home-review empty" data-brief-group>
-      <p>目前没有需要优先复习的内容。</p>
-      <p class="home-status-secondary">你的近期学习状态比较稳定。</p>
+      <p>${copy}</p>
     </div>`;
   }
-  const groups = vm.reviewGroups.slice(0, 2).map((group) => `
+  const groups = vm.reviewGroups.map((group) => `
     <div class="home-review-group">
       <p class="home-review-group-title">${escapeHtml(group.mapTitle)}</p>
-      <ul class="home-review-nodes">${group.candidates.slice(0, 2).map(renderCandidate).join("")}</ul>
+      <ul class="home-review-nodes">${group.candidates.map(renderCandidate).join("")}</ul>
     </div>`).join("");
-  const previewed = vm.reviewGroups.slice(0, 2).reduce((sum, group) => sum + Math.min(group.candidates.length, 2), 0);
-  const hidden = vm.reviewSummary.totalCandidateCount - previewed;
+  const hidden = vm.reviewSummary.totalCandidateCount - vm.reviewSummary.displayedCandidateCount;
   const more = hidden > 0
     ? `<p class="home-review-more">还有另外 ${hidden} 个节点可复习</p>`
     : "";

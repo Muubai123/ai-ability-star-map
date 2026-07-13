@@ -6,7 +6,7 @@ const id = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toS
 
 export function createGlobalReviewQueue(rawInput = "") {
   const timestamp = now();
-  return { id: id("review-queue"), type: "global_review", status: rawInput ? "analyzing" : "draft", createdAt: timestamp, updatedAt: timestamp, completedAt: null, rawInput, analysisSummary: "", unmatchedTopics: [], items: [], activeItemId: null, feedbacks: [] };
+  return { id: id("review-queue"), type: "global_review", status: rawInput ? "analyzing" : "draft", createdAt: timestamp, updatedAt: timestamp, completedAt: null, rawInput, analysisSummary: "", subjectGroups: [], unmatchedTopics: [], items: [], activeItemId: null, feedbacks: [] };
 }
 
 export function getReviewQueueById(data, queueId) { return data.reviewQueues.find((queue) => queue.id === queueId) || null; }
@@ -56,6 +56,7 @@ export function resumeReviewQueue(data, queueId) { const queue = getReviewQueueB
 export function completeReviewQueueItem(data, queueId, itemId, record, feedback) {
   const queue = getReviewQueueById(data, queueId); const item = queue?.items.find((entry) => entry.id === itemId); if (!item) return null;
   item.status = "completed"; item.reviewRecordId = record?.id || null; item.completedAt = now();
+  item.reviewDraft = null;
   item.resultSummary = { coveredNodes: record?.nodeIds?.length || 0, masteryUpdates: record?.masteryChanges?.filter((change) => change.accepted !== change.before).length || 0, newNodes: record?.newNodes?.length || 0, recordSummary: record?.summary || "" };
   queue.activeItemId = null; queue.status = "selecting";
   if (feedback) queue.feedbacks = [...(queue.feedbacks || []), feedback];
